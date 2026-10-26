@@ -1,0 +1,5 @@
+pnpm-lock.yaml
+packages/image-engine-wasm/pkg/
+apps/web/.next/
+apps/web/out/
+target/

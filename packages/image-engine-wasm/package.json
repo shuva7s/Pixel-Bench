@@ -1,0 +1,25 @@
+{
+  "name": "@image-tools/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed TypeScript wrapper around the Rust image-core engine compiled to WebAssembly.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./shared": "./src/shared.ts",
+    "./avif": "./src/avif.ts",
+    "./test-fixtures": "./test/fixtures.ts",
+    "./pkg/*": "./pkg/*"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "bench": "node scripts/bench.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

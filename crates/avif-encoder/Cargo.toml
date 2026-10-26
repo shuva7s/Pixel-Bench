@@ -1,0 +1,11 @@
+[package]
+name = "avif-encoder"
+version = "0.1.0"
+description = "AVIF encoding (rav1e via ravif), kept separate so the main engine stays small."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ravif = { version = "0.13", default-features = false }
+rgb = "0.8"

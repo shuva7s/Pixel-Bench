@@ -1,0 +1,25 @@
+{
+  "name": "image-tools",
+  "private": true,
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "build:wasm": "pnpm --filter @image-tools/engine build",
+    "dev": "pnpm build:wasm && pnpm --filter web dev",
+    "build": "pnpm build:wasm && pnpm --filter web build",
+    "start": "pnpm --filter web start",
+    "test": "pnpm test:rust && pnpm test:js",
+    "test:rust": "cargo test --workspace",
+    "test:js": "pnpm -r --if-present test",
+    "test:e2e": "pnpm --filter web test:e2e",
+    "lint": "pnpm -r --if-present lint && cargo clippy --workspace --all-targets -- -D warnings",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "format": "prettier --write . && cargo fmt --all",
+    "format:check": "prettier --check . && cargo fmt --all -- --check"
+  },
+  "devDependencies": {
+    "prettier": "3.9.10"
+  }
+}
