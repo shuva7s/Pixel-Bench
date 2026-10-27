@@ -59,8 +59,11 @@ jobs:
         include:
           - os: windows-latest
           - os: macos-latest
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
     runs-on: ${{ matrix.os }}
+    env:
+      # The prebuilt ONNX Runtime targets macOS 13.4 (ignored elsewhere).
+      MACOSX_DEPLOYMENT_TARGET: "13.4"
     steps:
       - uses: actions/checkout@v5
       - name: Linux packages for Tauri

@@ -95,6 +95,7 @@ To include BiRefNet in the Rust tests, set `BIREFNET_DIR` to a folder that conta
 - **Pull requests into `main`** also build the Windows, macOS and Linux installers, so nothing that fails to build can be merged. The installers are attached to the run as artifacts.
 - **Merging into `main` deploys** (`.github/workflows/release.yml`): the tests run again, the installers are built on all three systems, and a GitHub Release tagged `v<version>-build.<n>` is published. The release stays a draft until every platform has built.
 - The version comes from `apps/desktop/src-tauri/tauri.conf.json`; bump it to start a new version line.
+- The Linux installers need glibc 2.38 or newer (Ubuntu 24.04+, Debian 13+, Fedora 39+) and the Mac app needs macOS 13.4 or newer, because the prebuilt ONNX Runtime does.
 - Builds are unsigned for now. Windows SmartScreen and macOS Gatekeeper warn on first launch until code signing is set up.
 
 Recommended GitHub settings (Settings → Branches → add a rule for `main`): require a pull request before merging, and require the **ci / test** check to pass. Optionally make `develop` the default branch.

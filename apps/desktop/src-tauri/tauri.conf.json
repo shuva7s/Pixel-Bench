@@ -47,6 +47,9 @@
       "../../../models/LICENSE-BiRefNet.txt": "licenses/LICENSE-BiRefNet.txt",
       "../../../crates/app-core/fonts/LICENSE-Geist.txt": "licenses/LICENSE-Geist.txt",
       "../third-party/onnxruntime-LICENSE.txt": "licenses/LICENSE-onnxruntime.txt"
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.4"
     }
   }
 }
