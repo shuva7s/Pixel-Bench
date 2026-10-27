@@ -1,0 +1,42 @@
+# Shared test job, used by ci.yml and release.yml: everything must pass
+# before installers are built or a release is published.
+name: test
+
+on:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Linux packages for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev nasm webkit2gtk-driver xvfb
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Interface (type-check, lint, unit tests, static build)
+        run: |
+          pnpm --filter desktop typecheck
+          pnpm --filter desktop lint
+          pnpm --filter desktop test
+          pnpm --filter desktop build
+      - name: Rust (format, clippy, tests incl. the real AI models)
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace --release
+      - name: End-to-end tests (the real app, driven over WebDriver)
+        run: |
+          cargo install tauri-driver --locked
+          cargo build -p pixel-bench --features tauri/custom-protocol
+          pnpm --filter desktop test:e2e

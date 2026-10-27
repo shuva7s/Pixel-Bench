@@ -47,7 +47,7 @@ crates/avif-encoder/     AVIF encoding (rav1e via ravif, multi-threaded)
 apps/desktop/            Tauri app: src-tauri/ (Rust shell, one `call` command) + src/ (Next.js static UI, shadcn/ui)
 models/                  Bundled ONNX models with licences and SHA256SUMS
 scripts/convert_esrgan.py  Reproducible Real-ESRGAN → ONNX conversion with a parity check
-.github/workflows/       Cloud builds: tests + installers for Windows, macOS and Linux
+.github/workflows/       test.yml (shared), ci.yml (develop + PRs), release.yml (main → GitHub Release)
 ```
 
 ## Requirements
@@ -66,7 +66,7 @@ ONNX Runtime itself is downloaded automatically by the `ort` crate at build time
 Smart App Control blocks executables compiled on the machine, which includes every Rust build script. On such PCs:
 
 - **Develop and test in WSL2** as a Linux app. Tauri windows open on the Windows desktop through WSLg. Build the interface on Windows (`pnpm --filter desktop build`), then build and run the app in WSL with `cargo run -p pixel-bench --features tauri/custom-protocol`.
-- **Get Windows and macOS installers from CI.** Push to GitHub, and `.github/workflows/desktop.yml` builds them on GitHub's machines. Download them from the run's _Artifacts_.
+- **Get Windows and macOS installers from CI.** Open a pull request into `main` (installers appear under the run's _Artifacts_), or merge into `main` to publish a release (see [Branches, CI and releases](#branches-ci-and-releases)).
 - Unsigned installers trigger SmartScreen/Gatekeeper warnings, and Smart App Control may refuse an unsigned app altogether. Code signing (for example Azure Trusted Signing on Windows, or an Apple Developer ID on macOS) removes these warnings. It is not set up yet.
 
 ## Commands
@@ -88,6 +88,16 @@ cd apps/desktop && pnpm tauri build  # installers in target/release/bundle/
 ```
 
 To include BiRefNet in the Rust tests, set `BIREFNET_DIR` to a folder that contains `birefnet-lite-fp16.onnx`.
+
+## Branches, CI and releases
+
+- **`develop`** is where work happens. Every push runs the full test suite (`.github/workflows/ci.yml`): interface checks, Rust tests including the real AI models, and the end-to-end tests against the real app.
+- **Pull requests into `main`** also build the Windows, macOS and Linux installers, so nothing that fails to build can be merged. The installers are attached to the run as artifacts.
+- **Merging into `main` deploys** (`.github/workflows/release.yml`): the tests run again, the installers are built on all three systems, and a GitHub Release tagged `v<version>-build.<n>` is published. The release stays a draft until every platform has built.
+- The version comes from `apps/desktop/src-tauri/tauri.conf.json`; bump it to start a new version line.
+- Builds are unsigned for now. Windows SmartScreen and macOS Gatekeeper warn on first launch until code signing is set up.
+
+Recommended GitHub settings (Settings → Branches → add a rule for `main`): require a pull request before merging, and require the **ci / test** check to pass. Optionally make `develop` the default branch.
 
 ## Privacy
 

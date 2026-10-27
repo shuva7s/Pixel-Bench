@@ -1,56 +1,29 @@
-# Builds and tests the desktop app on Windows, macOS and Linux. Installers are
-# uploaded as workflow artifacts (Actions → this run → Artifacts); nothing is
-# published or released.
-name: desktop
+# Continuous integration for day-to-day work.
+# - Every push to `develop` runs the full test suite.
+# - Every pull request into `main` also builds the installers for Windows,
+#   macOS and Linux (as downloadable artifacts), so nothing that fails to
+#   build can be merged. Merging into `main` then publishes a release
+#   (see release.yml).
+name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [develop]
   pull_request:
+    branches: [main, develop]
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v5
-      - name: Linux packages for Tauri
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev nasm webkit2gtk-driver xvfb
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Frontend (type-check, lint, unit tests, static build)
-        run: |
-          pnpm --filter desktop typecheck
-          pnpm --filter desktop lint
-          pnpm --filter desktop test
-          pnpm --filter desktop build
-      - name: Rust (format, clippy, tests)
-        run: |
-          cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo test --workspace --release
-      - name: End-to-end tests (the real app, driven over WebDriver)
-        run: |
-          cargo install tauri-driver --locked
-          cargo build -p pixel-bench --features tauri/custom-protocol
-          pnpm --filter desktop test:e2e
+    uses: ./.github/workflows/test.yml
 
   build:
     needs: test
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main')
     strategy:
       fail-fast: false
       matrix:

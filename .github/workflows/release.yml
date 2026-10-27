@@ -1,0 +1,98 @@
+# Deployment: every push to `main` (normally a merged pull request from
+# `develop`) runs the tests, builds the installers on Windows, macOS and
+# Linux, and publishes them as a GitHub Release.
+#
+# The release is created as a draft first and only published when all three
+# platforms have built, so a half-finished release is never visible. Tags are
+# `v<version>-build.<run number>`, where <version> comes from
+# apps/desktop/src-tauri/tauri.conf.json; bump it for a new version line.
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One release at a time; never cancel a release that is already publishing.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  create-release:
+    needs: test
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Work out the tag
+        id: tag
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          echo "tag=v${version}-build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Create a draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            --target "${GITHUB_SHA}" \
+            --title "Pixel Bench ${{ steps.tag.outputs.version }} (build ${GITHUB_RUN_NUMBER})" \
+            --notes "Installers for Windows, macOS and Linux, built from ${GITHUB_SHA::7}. The builds are unsigned: Windows SmartScreen and macOS Gatekeeper will warn before the first launch." \
+            --draft
+          echo "release_id=$(gh release view "${{ steps.tag.outputs.tag }}" --json databaseId --jq .databaseId)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: macos-latest
+          - os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Linux packages for Tauri
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev nasm
+      - name: NASM (AVIF encoder assembly)
+        if: runner.os != 'Linux'
+        uses: ilammy/setup-nasm@v1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build and upload the installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+
+  publish:
+    needs: [create-release, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ needs.create-release.outputs.tag }}" --repo "${{ github.repository }}" --draft=false --latest
