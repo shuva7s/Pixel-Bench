@@ -1,1 +1,3 @@
 gen/
+# Staged by CI before a Windows build (see the workflows).
+/dlls/

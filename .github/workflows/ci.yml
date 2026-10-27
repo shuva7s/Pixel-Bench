@@ -56,6 +56,18 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Stage DirectML.dll (Windows)
+        # ONNX Runtime's DirectML.dll lands in target/release while the AI crate
+        # builds. Tauri copies bundled files into that same folder, so the
+        # installer takes the DLL from a separate copy instead.
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build --release -p ai
+          dll=$(find target/release -maxdepth 2 -iname DirectML.dll | head -n 1)
+          test -n "$dll" || { echo "DirectML.dll not found under target/release"; exit 1; }
+          mkdir -p apps/desktop/src-tauri/dlls
+          cp "$dll" apps/desktop/src-tauri/dlls/DirectML.dll
       - name: Build the app and installers
         working-directory: apps/desktop
         run: pnpm tauri build

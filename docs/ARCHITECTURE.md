@@ -73,4 +73,4 @@ AI on the CPU (native ONNX Runtime): U²-Netp 0.25 s per photo, BiRefNet-lite 9.
 
 - **Linux and macOS** build natively.
 - **Windows** builds in CI. On PCs with Smart App Control, develop in WSL2 (the app opens via WSLg) and take the Windows and macOS installers from CI: `ci.yml` builds them for pull requests into `main`, and `release.yml` publishes a GitHub Release on every merge into `main`.
-- **ONNX Runtime** is linked statically from `ort`'s prebuilt binaries. `tauri.windows.conf.json` is set up to ship `DirectML.dll` next to the Windows executable; the first Windows CI build has to confirm the file name.
+- **ONNX Runtime** is linked statically from `ort`'s prebuilt binaries. On Windows, `DirectML.dll` is shipped next to the executable: CI copies it from `target/release` into `src-tauri/dlls/` (git-ignored) before building, and `tauri.windows.conf.json` bundles it from there.
