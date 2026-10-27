@@ -1,7 +1,0 @@
-# Netlify / Cloudflare Pages. Cross-origin isolation enables SharedArrayBuffer,
-# which lets the AI tools run on several CPU threads. The site works without
-# these headers (single-threaded AI); see README "Deployment".
-/*
-  Cross-Origin-Opener-Policy: same-origin
-  Cross-Origin-Embedder-Policy: require-corp
-  X-Content-Type-Options: nosniff

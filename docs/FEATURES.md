@@ -2,13 +2,24 @@
 
 Last verified: 2026-10-26.
 
-The app has three tools: the **Photo editor** (Lightroom-style, one photo), **Utilities** (convert, compress, resize and clean one or many files) and **Remove background** (AI). The editor's colour and light controls go beyond the original Easy scope at the user's request.
+Pixel Bench is now a **desktop app** (Tauri 2, Windows / macOS / Linux) with a native Rust backend. It was converted from the browser version on 2026-10-26; the browser version is in git history (commit `e45252a`). There are three tools: the **Photo editor**, **Utilities**, and **Remove background**.
 
-Legend: ✅ implemented and tested · 🟡 implemented, incompletely tested · ⬜ not implemented
+## Desktop conversion status
 
-"Tested" means automated tests of real behaviour: native Rust tests (R), WASM-in-Node integration tests (W), web unit tests (U) and Playwright browser tests against the production build (E). "M" marks a manual check in a real browser.
+| Area                                                                                                                                                                 | Status     | Evidence                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Image engine (all operations, formats, metadata), multi-threaded                                                                                                     | ✅         | Rust tests pass single- and multi-threaded with identical results; a box-blur reference test covers the band-parallel path                                                                                                                                                                                                                                |
+| Backend: sessions, previews, every output format incl. lossy WebP (libwebp) and AVIF (rav1e), target size, watermarks, lossless metadata removal, AVIF/HEIC hand-off | ✅         | `cargo test -p app-core` (24 tests)                                                                                                                                                                                                                                                                                                                       |
+| AI: U²-Netp and BiRefNet-lite cut-outs, Real-ESRGAN 2×/4×, model pinning and tamper rejection                                                                        | ✅ (CPU)   | `cargo test -p ai --release` runs the **real models**: both cut-outs keep the subject and remove the background; upscaling stays within 2.4 levels of a Lanczos reference; BiRefNet runs on the CPU in 9.7 s                                                                                                                                              |
+| GPU acceleration (DirectML / Core ML)                                                                                                                                | 🟡         | Implemented with automatic CPU fallback; not yet run on a Windows or Mac machine                                                                                                                                                                                                                                                                          |
+| Tauri shell (IPC, dialogs, saving, progress)                                                                                                                         | ✅         | Built and run on Linux (WSL); exercised by the end-to-end suite; wire format and safe file names unit-tested                                                                                                                                                                                                                                              |
+| Interface                                                                                                                                                            | ✅         | Type-checks, lints, 26 unit tests; runs in the app window (WebKitGTK) under the end-to-end suite                                                                                                                                                                                                                                                          |
+| End-to-end tests                                                                                                                                                     | ✅ (Linux) | `pnpm --filter desktop test:e2e`: 8 WebDriver tests (`tauri-driver`) against the real app: navigation, native backend, edit + export, batch with HEIC to a target size, AVIF/WebP, AI upscale, background removal with transparent and colour exports, consent before downloads. Native Save dialogs are bypassed in tests by `PIXEL_BENCH_TEST_SAVE_DIR` |
+| Installers (Windows, macOS, Linux)                                                                                                                                   | 🟡         | CI workflow written (`.github/workflows/desktop.yml`), not yet run. Builds are unsigned                                                                                                                                                                                                                                                                   |
 
-## Photo editor (`/edit/`)
+The tables below describe features. "E" marks from the browser era refer to the old browser tests. The desktop end-to-end suite above covers the main flow of each tool; finer UI details (for example crop dragging and undo) are not yet re-covered.
+
+## Photo editor
 
 | Feature                                                                          | Status  | Tests   | Notes                                                                                |
 | -------------------------------------------------------------------------------- | ------- | ------- | ------------------------------------------------------------------------------------ |
@@ -26,120 +37,85 @@ Legend: ✅ implemented and tested · 🟡 implemented, incompletely tested · �
 | Info & metadata panel (camera, dates, GPS, software)                             | ✅      | R, W, E |                                                                                      |
 | Export (all output formats, quality, background)                                 | ✅      | E       | Download validated (magic bytes, dimensions)                                         |
 
-## Utilities (`/utilities/`)
+## Utilities
 
-| Feature                                                                                                | Status | Tests      | Notes                                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------ | ------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| One or many files (up to 200), per-file status, details before processing                              | ✅     | W, E       | Format is read from the bytes, not the name                                                                                                                |
-| Output: JPEG, PNG, WebP (lossy or lossless), AVIF, GIF, TIFF, ICO, BMP                                 | ✅     | R, W, E    | See codec table in ARCHITECTURE.md                                                                                                                         |
-| Input: all of the above plus HEIC/HEIF                                                                 | ✅     | R, W, E    | AVIF/HEIC decoded by the browser; HEIC falls back to libheif when the browser can't (E-tested fallback)                                                    |
-| Compression controls; real before/after sizes                                                          | ✅     | R, W, E    | "Larger" is shown as larger                                                                                                                                |
-| Target file size: at most / at least, optional resizing (in "Format & file size", right below Quality) | ✅     | U, E       | Binary search on quality (≤ 16 encodes), then on scale; the quality slider is hidden while a target is set; reports when a target can't be met; never pads |
-| Resize: fit within box, percentage                                                                     | ✅     | R, W, U, E |                                                                                                                                                            |
-| AI upscale 2× / 4×                                                                                     | ✅     | U, E       | See AI section                                                                                                                                             |
-| Metadata inspection (EXIF, GPS, XMP, ICC, comments)                                                    | ✅     | R, W, E    | GPS pin shown in the list                                                                                                                                  |
-| Lossless metadata removal (JPEG, PNG, WebP), keep orientation / ICC                                    | ✅     | R, W, E    | Pixels are copied unchanged; every output is re-parsed and verified clean                                                                                  |
-| Watermark (text / logo) for every file                                                                 | ✅     | E          |                                                                                                                                                            |
-| Bounded parallel processing, failures isolated per file                                                | ✅     | U, E       | min(4, cores/2) workers, terminated after each run                                                                                                         |
-| Finish current / Cancel now                                                                            | ✅     | U, E       | Cancel terminates the workers immediately                                                                                                                  |
-| Individual downloads and ZIP                                                                           | ✅     | E          |                                                                                                                                                            |
+| Feature                                                                                                | Status  | Tests      | Notes                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------ | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One or many files (up to 200), per-file status, details before processing                              | ✅      | W, E       | Format is read from the bytes, not the name                                                                                                                                                                                           |
+| Output: JPEG, PNG, WebP (lossy or lossless), AVIF, GIF, TIFF, ICO, BMP                                 | ✅      | R, W, E    | See codec table in ARCHITECTURE.md                                                                                                                                                                                                    |
+| Input: all of the above plus HEIC/HEIF                                                                 | ✅      | R, W, E    | AVIF/HEIC decoded by the system web view; HEIC falls back to libheif                                                                                                                                                                  |
+| Compression controls; real before/after sizes                                                          | ✅      | R, W, E    | "Larger" is shown as larger                                                                                                                                                                                                           |
+| Target file size: at most / at least, optional resizing (in "Format & file size", right below Quality) | ✅      | U, E       | Binary search on quality (≤ 16 encodes), then on scale; the quality slider is hidden while a target is set; reports when a target can't be met; never pads                                                                            |
+| Resize: fit within box, percentage                                                                     | ✅      | R, W, U, E |                                                                                                                                                                                                                                       |
+| AI upscale 2× / 4×                                                                                     | ✅      | U, E       | See AI section                                                                                                                                                                                                                        |
+| Metadata inspection (EXIF, GPS, XMP, ICC, comments)                                                    | ✅      | R, W, E    | GPS pin shown in the list                                                                                                                                                                                                             |
+| Lossless metadata removal (JPEG, PNG, WebP), keep orientation / ICC                                    | ✅      | R, W, E    | Pixels are copied unchanged; every output is re-parsed and verified clean                                                                                                                                                             |
+| Watermark (text / logo) for every file                                                                 | ✅      | E          |                                                                                                                                                                                                                                       |
+| Bounded parallel processing, failures isolated per file                                                | ✅      | U, E       | min(4, cores/2) workers, terminated after each run                                                                                                                                                                                    |
+| Finish current / Cancel now                                                                            | ✅ / 🟡 | U          | Both stop new files at once. Native jobs cannot be interrupted mid-file: files already in progress finish, but after "Cancel now" their results are discarded. AI upscaling stops between tiles. Not covered by the desktop E2E suite |
+| Individual downloads and ZIP                                                                           | ✅      | E          |                                                                                                                                                                                                                                       |
 
-## Remove background (`/remove-bg/`)
+## Remove background
 
-| Feature                                                                  | Status  | Tests | Notes                                                                                                                                                                               |
-| ------------------------------------------------------------------------ | ------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fast model (U²-Netp, self-hosted)                                        | ✅      | U, E  | E2E checks the subject is kept and the background removed on a synthetic photo; no external requests                                                                                |
-| High-quality model (BiRefNet-lite), downloaded with consent, WebGPU only | ✅      | U, E  | Consent, pinned URL, download failure, checksum rejection and a real download + cut-out run on a real GPU (`webgpu` project). Without WebGPU it is unavailable, with an explanation |
-| WebGPU with CPU fallback (Fast model, upscaling)                         | ✅      | E     | Both paths E2E-tested (`chromium` = CPU, `webgpu` = real GPU). A GPU failure at run time retries on the CPU                                                                         |
-| Empty-mask warning                                                       | 🟡      | —     | Shown when the mask keeps < 0.1% of pixels; not automated                                                                                                                           |
-| Backgrounds: transparent, colour, blurred photo, image                   | ✅ / 🟡 | U, E  | Transparent and colour E2E-tested; blur and image share the compositor (unit-tested)                                                                                                |
-| Edge hardness, shift, feather; mask view                                 | ✅      | U, E  | Settings re-composite without re-running the model                                                                                                                                  |
-| Export via the normal output settings (PNG default)                      | ✅      | E     |                                                                                                                                                                                     |
+| Feature                                                          | Status  | Tests | Notes                                                                                                                            |
+| ---------------------------------------------------------------- | ------- | ----- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Fast model (U²-Netp, included with the app)                      | ✅      | R     | Real-model test: subject kept, background removed; 0.25 s on the CPU                                                             |
+| High-quality model (BiRefNet-lite), downloaded with consent      | ✅ / 🟡 | R     | Real-model test on the CPU (9.7 s); pinned URL and tamper rejection tested. The consent flow is not yet tested in the app window |
+| GPU (DirectML / Core ML) with CPU fallback                       | 🟡      | —     | A GPU failure at load or run time falls back to the CPU; not yet run on Windows/macOS                                            |
+| Empty-mask warning                                               | 🟡      | —     | Shown when the mask keeps < 0.1% of pixels                                                                                       |
+| Backgrounds: transparent, colour, blurred photo, image           | ✅      | R     | Compositor and cover-fit tested natively                                                                                         |
+| Edge hardness, shift, feather; mask view                         | ✅      | R     | Settings re-composite without re-running the model                                                                               |
+| Export via the normal output settings (PNG default), Save dialog | 🟡      | —     | Encoding tested natively; the Save dialog flow is not yet tested in the app                                                      |
 
 ## AI models
 
 | Model                            | Used by                          | Size   | Licence      | Source / hosting                                                                                                                                      |
 | -------------------------------- | -------------------------------- | ------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| U²-Netp                          | Remove background — Fast         | 4.6 MB | Apache-2.0   | xuebinqin/U-2-Net; ONNX from `BritishWerewolf/U-2-Netp` @ `7112208d`. Self-hosted in `models/`                                                        |
+| U²-Netp                          | Remove background — Fast         | 4.6 MB | Apache-2.0   | xuebinqin/U-2-Net; ONNX from `BritishWerewolf/U-2-Netp` @ `7112208d`. Bundled with the app                                                            |
 | BiRefNet-lite (fp16)             | Remove background — High quality | 110 MB | MIT          | ZhengPeng7/BiRefNet; WebGPU-friendly export `jiabins0303/birefnet-lite-1024-webgpu` @ `1ad01cef`. Fetched from Hugging Face at runtime, after consent |
-| Real-ESRGAN realesr-general-x4v3 | Utilities — AI upscale           | 4.9 MB | BSD-3-Clause | Converted to ONNX by us from the official weights (`scripts/convert_esrgan.py`; max difference to PyTorch 1.9 × 10⁻⁵). Self-hosted                    |
+| Real-ESRGAN realesr-general-x4v3 | Utilities — AI upscale           | 4.9 MB | BSD-3-Clause | Converted to ONNX by us from the official weights (`scripts/convert_esrgan.py`; max difference to PyTorch 1.9 × 10⁻⁵). Bundled with the app           |
 
-- Every model is pinned by byte size and SHA-256 (`apps/web/src/lib/ai/models.ts`, `models/SHA256SUMS`). The browser verifies the hash before using or caching a model.
-- Verified models are kept in Cache Storage (`models-v1`), which app updates don't clear. They work offline afterwards.
+- Every model is pinned by byte size and SHA-256 (`crates/ai/src/models.rs`, `models/SHA256SUMS`). The app verifies the hash every time it loads a model. A download that fails the check is deleted.
+- U²-Netp and Real-ESRGAN ship inside the app. BiRefNet is downloaded once into the app's data folder and works offline afterwards.
 - Offline validation against known masks: U²-Netp IoU 0.996, BiRefNet-lite IoU 1.0 on a synthetic scene (`onnxruntime` native).
 - The weights' licences are listed above. The models were trained on public datasets (e.g. DUTS, DIS5K, DIV2K) that carry their own terms. We don't redistribute those datasets.
 - Rejected candidates: RMBG-1.4/2.0 (non-commercial licence), ISNet general-use (licence unclear), APISR (GPL).
 
 ### AI performance and limits
 
-- Runtime: ONNX Runtime Web 1.30, the `webgpu` build (native WebGPU execution provider, plus WebAssembly SIMD for the CPU). It is loaded from `/vendor/ort/` only when an AI tool runs (≈ 27 MB, cached). The default JSEP build was measured and rejected. On an Intel Iris Xe it can't run U²-Net (MaxPool `ceil_mode` is not implemented), and it silently returns garbage for BiRefNet: Concat kernels need more than the 8 storage buffers allowed per stage, so they fail validation. The native EP matches the CPU output for all three models.
-- CPU threads need cross-origin isolation (COOP/COEP). `public/_headers` and `scripts/serve.mjs` send these headers. Without them, inference is single-threaded and noticeably slower.
-- Upscaling works in 192 px tiles with 16 px of overlapping context, so memory stays bounded and there are no seams. 2× averages 2×2 blocks of the 4× result. The output is limited to 50 MP.
-- **BiRefNet needs WebGPU.** Its export has a fixed 1024 × 1024 input, and on WebAssembly inference fails with `std::bad_alloc`: wasm32 memory is capped at 4 GB. This was reproduced in Chrome and in Node. Measured on an Intel Iris Xe (i7-12650H): download about 15 s, model preparation about 6 s, inference 13–20 s.
-- U²-Netp: about 1.7 s on the CPU (single thread) or GPU at 320². Real-ESRGAN: about 0.4 s (CPU) / 0.7 s (GPU) per 64² tile in the lab test; upscaling a 40 × 30 image takes under a second.
-- WebGPU is used only where available (desktop Chrome/Edge; other browsers vary). Playwright's bundled Chromium exposes no adapter here, so the GPU tests use installed Chrome (`E2E_WEBGPU=1`).
+- Runtime: native ONNX Runtime 1.31 through `ort` 2.0 (prebuilt, statically linked). It tries the GPU provider on Windows (DirectML) and macOS (Core ML) and falls back to the CPU, both when the provider cannot be registered and when a run fails. Linux uses the CPU.
+- Measured on the CPU (i7-12650H, in WSL): U²-Netp 0.25 s; BiRefNet-lite 9.7 s at its fixed 1024 × 1024 input. The browser version could not run BiRefNet on the CPU at all: it exceeded WebAssembly's 4 GB memory limit.
+- Upscaling works in 256 px tiles with 16 px of overlapping context, so memory stays bounded and there are no seams. 2× averages 2×2 blocks of the 4× result. Output is limited to 50 MP, and it can be cancelled between tiles.
+- Browser-era findings that still matter if the web view is ever used for AI again: ONNX Runtime Web's default JSEP WebGPU build failed on U²-Net and returned garbage for BiRefNet on an Intel Iris Xe. The native app does not use it.
 
 ## Shared safeguards
 
-| Feature                                                                          | Status | Tests   |
-| -------------------------------------------------------------------------------- | ------ | ------- |
-| Rust → WASM engine and the AI runtime in Web Workers (not in the main bundle)    | ✅     | W, E    |
-| Limits checked from the header before allocation (100 MB, 20,000 px/side, 50 MP) | ✅     | R, W, E |
-| Malformed/truncated input rejected without panics                                | ✅     | R, W, E |
-| Animated GIF/PNG/WebP and multi-page TIFF rejected explicitly                    | ✅     | R, W    |
-| Offline after the first visit (service worker)                                   | ✅     | E       |
-| No external network requests (except the opt-in BiRefNet download)               | ✅     | E       |
-| Phone-width layout (no horizontal overflow)                                      | ✅     | E       |
+| Feature                                                                          | Status  | Tests                                                      |
+| -------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------- |
+| Native Rust backend on a blocking thread pool (UI never blocks)                  | ✅ / 🟡 | R; not yet observed in the app                             |
+| Limits checked from the header before allocation (100 MB, 20,000 px/side, 50 MP) | ✅      | R                                                          |
+| Malformed/truncated input rejected without panics                                | ✅      | R                                                          |
+| Animated GIF/PNG/WebP and multi-page TIFF rejected explicitly                    | ✅      | R                                                          |
+| Works offline (the optional BiRefNet download aside)                             | ✅      | By construction: no network code except the model download |
+| Saving never overwrites existing files in batch mode                             | ✅      | R (Tauri shell unit test)                                  |
 
 ## Known issues and limitations
 
 - **JPEG output does not use optimised Huffman tables.** `zune-jpeg` 0.5.15 (inside `image` 0.25.10) mis-decodes legal JPEGs whose AC Huffman table has a single symbol, which optimised tables produce for near-uniform images. An ignored regression test (`cargo test -- --ignored`) tracks the upstream fix.
-- **Lossless WebP isn't size-optimised** (`image-webp`): photos come out much bigger than PNG. Lossy WebP (libwebp via `@jsquash/webp`, Apache-2.0) is the default.
-- **AVIF encoding is slow.** It uses rav1e (pure Rust) in a separate, lazily loaded module (940 KB). "Fast" is the default speed.
+- **Lossless WebP isn't size-optimised** (`image-webp`): photos come out much bigger than PNG. Lossy WebP (native libwebp, BSD-3) is the default.
+- **AVIF encoding is slow.** It uses rav1e (multi-threaded, with assembly). "Fast" is the default speed.
 - **HEIC can't be written**, and HEVC patents may apply to decoding in some countries. libheif (LGPL-3.0) is shipped unmodified as a separate file.
 - **Metadata can't be inspected for AVIF/HEIC.** Converted files never contain metadata. Lossless removal supports JPEG, PNG and WebP only.
 - **Target size:** an exact byte count can't be guaranteed. Lossless formats can only reach a target by resizing. "At least" never pads files with junk.
 - **Editor preview approximations:** previews render on a ≤ 1400 px copy, so fine sharpening and grain look different from the export.
 - **Colour management:** pixels are treated as sRGB. **Bit depth:** 16-bit input is processed at 8 bits.
-- **Memory:** WASM memory grows to fit the largest image and is only released when the worker ends.
+- **Memory:** an open image stays in memory (with its preview proxies) until it is closed; batch jobs free their images as soon as each file is done.
 - **Next.js 16.4 static export quirk:** segment-prefetch files are written as nested folders but requested with flat names. `scripts/fix-export.mjs` writes the flat copies.
-
-## WASM SIMD (measured, not enabled)
-
-`simd128` was benchmarked on the full engine (6000 × 4000, Node 24, i7-12650H, median of 3):
-
-| Operation                      |     Baseline |         SIMD |
-| ------------------------------ | -----------: | -----------: |
-| Encode PNG fast                |       828 ms |       446 ms |
-| Encode PNG default             |      1661 ms |      1427 ms |
-| Encode JPEG q85 / progressive  | 359 / 374 ms | 384 / 474 ms |
-| Develop: + vignette + grain    |      1056 ms |       923 ms |
-| Editor preview 1400 px, all on |       176 ms |       145 ms |
-| Straighten 3°                  |      1040 ms |      1140 ms |
-| Other operations               |   within ±5% |              |
-
-The gains are mixed. The common paths (JPEG encode, straighten) get slower, and SIMD would require a second build plus feature detection for older browsers, so it stays off. The AI runtime and the WebP encoder pick SIMD builds themselves.
 
 ## Not implemented yet (⬜)
 
 Tone curve editor, colour grading, noise reduction, dehaze, healing, masks · animated GIF/WebP and multi-page TIFF processing · ICC colour management.
 
-## Benchmarks (6000 × 4000, Node 24 / V8, release WASM, no SIMD)
+## Benchmarks
 
-Run with `pnpm --filter @image-tools/engine bench`. Median of 3 runs on an i7-12650H; figures vary by machine and run.
-
-| Operation                                    |                   Time |
-| -------------------------------------------- | ---------------------: |
-| Decode JPEG (3.4 MB)                         |                 294 ms |
-| Encode JPEG q85                              |                 353 ms |
-| Encode PNG fast / balanced / smallest        | ~0.9 / 1.3–1.6 / 2.3 s |
-| Encode WebP lossless                         |                 421 ms |
-| Resize 50% / to 1920 px (Lanczos3)           |            107 / 80 ms |
-| Rotate 90° / flip / crop                     |       113 / 23 / 13 ms |
-| Straighten 3°                                |                 ~1.2 s |
-| Develop: light + colour                      |                 341 ms |
-| Develop: + colour mixer                      |                 ~1.2 s |
-| Develop: + clarity + sharpening              |                 ~1.9 s |
-| Editor preview, 1400 px, every adjustment on |                 147 ms |
-
-The engine WASM is 2.3 MB (850 KB gzipped). Only the engine and AI workers load it.
+See [ARCHITECTURE.md](ARCHITECTURE.md#performance-6000--4000-release-i7-12650h-best-of-3): the native, multi-threaded engine is 3–7× faster than the browser version on the heavy operations.

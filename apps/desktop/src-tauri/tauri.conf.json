@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Pixel Bench",
+  "version": "0.1.0",
+  "identifier": "app.pixelbench.desktop",
+  "build": {
+    "frontendDist": "../out",
+    "devUrl": "http://localhost:3000",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Pixel Bench",
+        "width": 1280,
+        "height": 840,
+        "minWidth": 900,
+        "minHeight": 600,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' blob: data:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Photography",
+    "shortDescription": "Private photo editor, converter and background remover",
+    "longDescription": "Edit, convert, compress and resize photos, and remove backgrounds with on-device AI. Everything runs locally; nothing is uploaded.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "resources": {
+      "../../../models/u2netp.onnx": "models/u2netp.onnx",
+      "../../../models/realesr-general-x4v3.onnx": "models/realesr-general-x4v3.onnx",
+      "../../../models/LICENSE-U2Net.txt": "licenses/LICENSE-U2Net.txt",
+      "../../../models/LICENSE-Real-ESRGAN.txt": "licenses/LICENSE-Real-ESRGAN.txt",
+      "../../../models/LICENSE-BiRefNet.txt": "licenses/LICENSE-BiRefNet.txt",
+      "../../../crates/app-core/fonts/LICENSE-Geist.txt": "licenses/LICENSE-Geist.txt",
+      "../third-party/onnxruntime-LICENSE.txt": "licenses/LICENSE-onnxruntime.txt"
+    }
+  }
+}

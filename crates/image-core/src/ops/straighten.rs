@@ -43,15 +43,21 @@ pub(super) fn straighten(img: RgbaImage, degrees: f32) -> Result<RgbaImage> {
             (top * (1.0 - fy) + bot * fy).round_ties_even() as u8
         })
     };
-    let out = RgbaImage::from_fn(w, h, |x, y| {
-        // Inverse mapping: output pixel centre -> source position.
-        let dx = (x as f32 + 0.5 - cx) / s;
-        let dy = (y as f32 + 0.5 - cy) / s;
-        let sx = cos * dx + sin * dy + cx - 0.5;
-        let sy = -sin * dx + cos * dy + cy - 0.5;
-        image::Rgba(sample(sx, sy))
+    let mut out = vec![0u8; stride * h as usize];
+    crate::par::for_rows(&mut out, stride, |y0, band| {
+        for (i, row) in band.chunks_exact_mut(stride).enumerate() {
+            let y = y0 + i;
+            for (x, p) in row.chunks_exact_mut(4).enumerate() {
+                // Inverse mapping: output pixel centre -> source position.
+                let dx = (x as f32 + 0.5 - cx) / s;
+                let dy = (y as f32 + 0.5 - cy) / s;
+                let sx = cos * dx + sin * dy + cx - 0.5;
+                let sy = -sin * dx + cos * dy + cy - 0.5;
+                p.copy_from_slice(&sample(sx, sy));
+            }
+        }
     });
-    Ok(out)
+    Ok(RgbaImage::from_raw(w, h, out).expect("sized buffer"))
 }
 
 #[cfg(test)]

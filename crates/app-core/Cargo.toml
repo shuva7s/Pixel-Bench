@@ -1,0 +1,20 @@
+[package]
+name = "app-core"
+version = "0.1.0"
+description = "Desktop backend: image sessions, encoding for every output format, target size, watermarks and batch jobs."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+image-core = { workspace = true, features = ["parallel"] }
+avif-encoder = { path = "../avif-encoder", features = ["native", "asm"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif", "tiff", "ico"] }
+webp = { version = "0.3.1", default-features = false }
+tiny-skia = "0.12.0"
+ab_glyph = "0.2.32"
+fontdb = "0.24.0"
+rayon = "1.12.0"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

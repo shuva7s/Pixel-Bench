@@ -1,0 +1,27 @@
+[package]
+name = "ai"
+version = "0.1.0"
+description = "On-device AI: background removal and super-resolution with ONNX Runtime."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Prebuilt ONNX Runtime, downloaded at build time over rustls (no system OpenSSL needed).
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "download-binaries", "copy-dylibs", "tls-rustls", "api-31"] }
+ndarray = "0.17.2"
+image-core = { workspace = true, features = ["parallel"] }
+image = { version = "0.25.10", default-features = false }
+sha2 = "0.11.1"
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
+serde.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["directml"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["coreml"] }
+
+[dev-dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png"] }

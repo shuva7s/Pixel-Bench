@@ -1,21 +1,20 @@
 {
-  "name": "image-tools",
+  "name": "pixel-bench",
   "private": true,
   "packageManager": "pnpm@12.15.0",
   "engines": {
     "node": ">=20.9.0"
   },
   "scripts": {
-    "build:wasm": "pnpm --filter @image-tools/engine build",
-    "dev": "pnpm build:wasm && pnpm --filter web dev",
-    "build": "pnpm build:wasm && pnpm --filter web build",
-    "start": "pnpm --filter web start",
+    "dev": "pnpm --filter desktop tauri dev",
+    "build": "pnpm --filter desktop tauri build",
+    "build:ui": "pnpm --filter desktop build",
     "test": "pnpm test:rust && pnpm test:js",
-    "test:rust": "cargo test --workspace",
-    "test:js": "pnpm -r --if-present test",
-    "test:e2e": "pnpm --filter web test:e2e",
-    "lint": "pnpm -r --if-present lint && cargo clippy --workspace --all-targets -- -D warnings",
-    "typecheck": "pnpm -r --if-present typecheck",
+    "test:rust": "cargo test --workspace --release",
+    "test:js": "pnpm --filter desktop test",
+    "test:e2e": "pnpm --filter desktop test:e2e",
+    "lint": "pnpm --filter desktop lint && cargo clippy --workspace --all-targets -- -D warnings",
+    "typecheck": "pnpm --filter desktop typecheck",
     "format": "prettier --write . && cargo fmt --all",
     "format:check": "prettier --check . && cargo fmt --all -- --check"
   },

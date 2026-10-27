@@ -1,7 +1,7 @@
 //! AVIF encoding for 8-bit RGBA pixels.
 //!
-//! Lives in its own crate (and WASM module) because rav1e roughly doubles the
-//! size of the engine; the web app only downloads it when AVIF is chosen.
+//! Kept in its own crate so the rav1e build options (threads, assembly) are
+//! chosen in one place.
 
 use rgb::FromSlice;
 

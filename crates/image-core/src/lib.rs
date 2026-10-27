@@ -1,7 +1,6 @@
-//! Conventional image processing for the image tools app.
-//!
-//! The crate is target-agnostic: it is tested natively and compiled to
-//! WebAssembly through the `image-engine-wasm` bindings crate.
+//! The image engine of Pixel Bench: decoding, inspection, operations,
+//! encoding and metadata. Pure Rust with no UI dependency; the `parallel`
+//! feature spreads the heavy loops over all cores.
 
 pub mod decode;
 pub mod encode;
@@ -10,6 +9,7 @@ pub mod format;
 pub mod limits;
 pub mod metadata;
 pub mod ops;
+mod par;
 
 pub use image::RgbaImage;
 

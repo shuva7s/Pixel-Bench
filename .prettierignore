@@ -1,5 +1,5 @@
 pnpm-lock.yaml
-packages/image-engine-wasm/pkg/
-apps/web/.next/
-apps/web/out/
+apps/desktop/.next/
+apps/desktop/out/
+apps/desktop/src-tauri/gen/
 target/

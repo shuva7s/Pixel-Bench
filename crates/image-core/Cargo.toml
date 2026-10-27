@@ -1,7 +1,7 @@
 [package]
 name = "image-core"
 version = "0.1.0"
-description = "Image decoding, transformation and encoding core for the image tools web app."
+description = "Image decoding, transformation, encoding and metadata for Pixel Bench."
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,11 @@ jpeg-encoder = { version = "0.7.1", default-features = false, features = ["std"]
 fast_image_resize = { version = "6.1.0", default-features = false, features = ["std"] }
 serde.workspace = true
 thiserror.workspace = true
+rayon = { version = "1.12.0", optional = true }
+
+[features]
+# Multi-threaded processing on all cores (native builds).
+parallel = ["fast_image_resize/rayon", "dep:rayon"]
 
 [dev-dependencies]
 serde_json.workspace = true

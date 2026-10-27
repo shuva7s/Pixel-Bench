@@ -13,6 +13,7 @@ use image::RgbaImage;
 use serde::Deserialize;
 
 use crate::error::{EngineError, Result};
+use crate::par::{for_bands, for_rows};
 
 pub const BANDS: usize = 8;
 /// Band centres in degrees: red, orange, yellow, green, aqua, blue, purple, magenta.
@@ -457,56 +458,68 @@ impl ColorParams {
 // ---------------------------------------------------------------------------
 
 fn luma_plane(img: &RgbaImage) -> Vec<u8> {
-    img.as_raw()
-        .chunks_exact(4)
-        .map(|p| ((54 * p[0] as u32 + 183 * p[1] as u32 + 19 * p[2] as u32 + 128) >> 8) as u8)
-        .collect()
+    let w = img.width() as usize;
+    let src = img.as_raw();
+    let mut out = vec![0u8; src.len() / 4];
+    for_rows(&mut out, w, |y0, band| {
+        let px = &src[y0 * w * 4..][..band.len() * 4];
+        for (o, p) in band.iter_mut().zip(px.chunks_exact(4)) {
+            *o = ((54 * p[0] as u32 + 183 * p[1] as u32 + 19 * p[2] as u32 + 128) >> 8) as u8;
+        }
+    });
+    out
 }
 
 /// One horizontal + vertical box-blur pass. Near the edges the window
-/// shrinks to the pixels that exist. Cache-friendly: the vertical pass keeps
-/// running column sums and walks rows in order.
+/// shrinks to the pixels that exist. Rows are independent in the horizontal
+/// pass; the vertical pass keeps running column sums within bands of rows,
+/// each band starting from its own window, so bands run in parallel.
 fn box_blur(src: &[u8], dst: &mut [u8], tmp: &mut [u8], w: usize, h: usize, r: usize) {
-    let mut prefix = vec![0u32; w + 1];
-    for y in 0..h {
-        let row = &src[y * w..(y + 1) * w];
-        for x in 0..w {
-            prefix[x + 1] = prefix[x] + row[x] as u32;
+    for_rows(tmp, w, |y0, band| {
+        let mut prefix = vec![0u32; w + 1];
+        for (i, out) in band.chunks_exact_mut(w).enumerate() {
+            let row = &src[(y0 + i) * w..][..w];
+            for x in 0..w {
+                prefix[x + 1] = prefix[x] + row[x] as u32;
+            }
+            for (x, o) in out.iter_mut().enumerate() {
+                let lo = x.saturating_sub(r);
+                let hi = (x + r).min(w - 1);
+                let n = (hi - lo + 1) as u32;
+                *o = ((prefix[hi + 1] - prefix[lo] + n / 2) / n) as u8;
+            }
         }
-        let out = &mut tmp[y * w..(y + 1) * w];
-        for (x, o) in out.iter_mut().enumerate() {
-            let lo = x.saturating_sub(r);
-            let hi = (x + r).min(w - 1);
-            let n = (hi - lo + 1) as u32;
-            *o = ((prefix[hi + 1] - prefix[lo] + n / 2) / n) as u8;
-        }
-    }
-    let mut sums = vec![0u32; w];
-    let mut count = 0u32;
-    for row in tmp.chunks_exact(w).take(r.min(h - 1) + 1) {
-        for (s, &v) in sums.iter_mut().zip(row) {
-            *s += v as u32;
-        }
-        count += 1;
-    }
-    for y in 0..h {
-        let out = &mut dst[y * w..(y + 1) * w];
-        for (o, &s) in out.iter_mut().zip(&sums) {
-            *o = ((s + count / 2) / count) as u8;
-        }
-        if y + r + 1 < h {
-            for (s, &v) in sums.iter_mut().zip(&tmp[(y + r + 1) * w..(y + r + 2) * w]) {
+    });
+    let tmp = &*tmp;
+    let row = |y: usize| &tmp[y * w..(y + 1) * w];
+    for_bands(dst, w, (2 * r + 1).max(64), |y0, band| {
+        let mut sums = vec![0u32; w];
+        let (lo, hi) = (y0.saturating_sub(r), (y0 + r).min(h - 1));
+        for y in lo..=hi {
+            for (s, &v) in sums.iter_mut().zip(row(y)) {
                 *s += v as u32;
             }
-            count += 1;
         }
-        if y >= r {
-            for (s, &v) in sums.iter_mut().zip(&tmp[(y - r) * w..(y - r + 1) * w]) {
-                *s -= v as u32;
+        let mut count = (hi - lo + 1) as u32;
+        for (i, out) in band.chunks_exact_mut(w).enumerate() {
+            let y = y0 + i;
+            for (o, &s) in out.iter_mut().zip(&sums) {
+                *o = ((s + count / 2) / count) as u8;
             }
-            count -= 1;
+            if y + r + 1 < h {
+                for (s, &v) in sums.iter_mut().zip(row(y + r + 1)) {
+                    *s += v as u32;
+                }
+                count += 1;
+            }
+            if y >= r {
+                for (s, &v) in sums.iter_mut().zip(row(y - r)) {
+                    *s -= v as u32;
+                }
+                count -= 1;
+            }
         }
-    }
+    });
 }
 
 /// Approximates a Gaussian blur of standard deviation `sigma`.
@@ -514,22 +527,29 @@ fn gaussian_like(src: &[u8], w: usize, h: usize, sigma: f32) -> Vec<u8> {
     if sigma < 1.2 {
         // A single separable [1 2 1] pass (sigma ≈ 0.7) for fine sharpening.
         let mut tmp = vec![0u8; src.len()];
-        for (row, out) in src.chunks_exact(w).zip(tmp.chunks_exact_mut(w)) {
-            for x in 0..w {
-                let l = row[x.saturating_sub(1)] as u32;
-                let r = row[(x + 1).min(w - 1)] as u32;
-                out[x] = ((l + 2 * row[x] as u32 + r + 2) / 4) as u8;
+        for_rows(&mut tmp, w, |y0, band| {
+            for (i, out) in band.chunks_exact_mut(w).enumerate() {
+                let row = &src[(y0 + i) * w..][..w];
+                for x in 0..w {
+                    let l = row[x.saturating_sub(1)] as u32;
+                    let r = row[(x + 1).min(w - 1)] as u32;
+                    out[x] = ((l + 2 * row[x] as u32 + r + 2) / 4) as u8;
+                }
             }
-        }
+        });
         let mut out = vec![0u8; src.len()];
-        for y in 0..h {
-            let up = &tmp[y.saturating_sub(1) * w..][..w];
-            let mid = &tmp[y * w..][..w];
-            let down = &tmp[(y + 1).min(h - 1) * w..][..w];
-            for (x, o) in out[y * w..(y + 1) * w].iter_mut().enumerate() {
-                *o = ((up[x] as u32 + 2 * mid[x] as u32 + down[x] as u32 + 2) / 4) as u8;
+        let tmp = &tmp;
+        for_rows(&mut out, w, |y0, band| {
+            for (i, o_row) in band.chunks_exact_mut(w).enumerate() {
+                let y = y0 + i;
+                let up = &tmp[y.saturating_sub(1) * w..][..w];
+                let mid = &tmp[y * w..][..w];
+                let down = &tmp[(y + 1).min(h - 1) * w..][..w];
+                for (x, o) in o_row.iter_mut().enumerate() {
+                    *o = ((up[x] as u32 + 2 * mid[x] as u32 + down[x] as u32 + 2) / 4) as u8;
+                }
             }
-        }
+        });
         return out;
     }
     // Three box passes; r(r + 1) ≈ sigma².
@@ -547,15 +567,28 @@ fn gaussian_like(src: &[u8], w: usize, h: usize, sigma: f32) -> Vec<u8> {
 }
 
 /// Adds `delta(luma, blurred)` to every colour channel.
-fn add_luma_delta(img: &mut RgbaImage, luma: &[u8], blurred: &[u8], f: impl Fn(f32, f32) -> f32) {
-    for ((p, &l), &bl) in img.as_mut().chunks_exact_mut(4).zip(luma).zip(blurred) {
-        let d = f(l as f32, bl as f32);
-        if d != 0.0 {
-            for c in &mut p[..3] {
-                *c = (*c as f32 + d).round_ties_even().clamp(0.0, 255.0) as u8;
+fn add_luma_delta(
+    img: &mut RgbaImage,
+    luma: &[u8],
+    blurred: &[u8],
+    f: impl Fn(f32, f32) -> f32 + Sync + Send,
+) {
+    let w = img.width() as usize;
+    for_rows(img.as_mut(), w * 4, |y0, band| {
+        let start = y0 * w;
+        for ((p, &l), &bl) in band
+            .chunks_exact_mut(4)
+            .zip(&luma[start..])
+            .zip(&blurred[start..])
+        {
+            let d = f(l as f32, bl as f32);
+            if d != 0.0 {
+                for c in &mut p[..3] {
+                    *c = (*c as f32 + d).round_ties_even().clamp(0.0, 255.0) as u8;
+                }
             }
         }
-    }
+    });
 }
 
 /// Blurs the colour channels (alpha is kept) with a Gaussian-like filter whose
@@ -565,13 +598,18 @@ fn blur(img: &mut RgbaImage, amount: f32) {
     let sigma = (w.max(h) as f32 * 0.02 * amount).max(0.5);
     let mut plane = vec![0u8; w * h];
     for c in 0..3 {
-        for (v, p) in plane.iter_mut().zip(img.as_raw().chunks_exact(4)) {
-            *v = p[c];
-        }
+        let src = img.as_raw();
+        for_rows(&mut plane, w, |y0, band| {
+            for (v, p) in band.iter_mut().zip(src[y0 * w * 4..].chunks_exact(4)) {
+                *v = p[c];
+            }
+        });
         let blurred = gaussian_like(&plane, w, h, sigma);
-        for (p, v) in img.as_mut().chunks_exact_mut(4).zip(blurred) {
-            p[c] = v;
-        }
+        for_rows(img.as_mut(), w * 4, |y0, band| {
+            for (p, &v) in band.chunks_exact_mut(4).zip(&blurred[y0 * w..]) {
+                p[c] = v;
+            }
+        });
     }
 }
 
@@ -620,43 +658,47 @@ fn vignette(img: &mut RgbaImage, amount: f32, midpoint: f32) {
     let nx2: Vec<f32> = (0..w)
         .map(|x| ((x as f32 + 0.5 - cx) / cx).powi(2))
         .collect();
-    for (y, row) in img.as_mut().chunks_exact_mut(w * 4).enumerate() {
-        let ny2 = ((y as f32 + 0.5 - cy) / cy).powi(2);
-        for (p, &nx) in row.chunks_exact_mut(4).zip(&nx2) {
-            let f = lut[(((nx + ny2) / 2.0).min(1.0) * N as f32) as usize];
-            if f == 0.0 {
-                continue;
-            }
-            for c in &mut p[..3] {
-                let v = *c as f32;
-                let out = if f < 0.0 {
-                    v * (1.0 + f)
-                } else {
-                    v + (255.0 - v) * f
-                };
-                *c = (out + 0.5).clamp(0.0, 255.0) as u8;
+    for_rows(img.as_mut(), w * 4, |y0, band| {
+        for (i, row) in band.chunks_exact_mut(w * 4).enumerate() {
+            let ny2 = (((y0 + i) as f32 + 0.5 - cy) / cy).powi(2);
+            for (p, &nx) in row.chunks_exact_mut(4).zip(&nx2) {
+                let f = lut[(((nx + ny2) / 2.0).min(1.0) * N as f32) as usize];
+                if f == 0.0 {
+                    continue;
+                }
+                for c in &mut p[..3] {
+                    let v = *c as f32;
+                    let out = if f < 0.0 {
+                        v * (1.0 + f)
+                    } else {
+                        v + (255.0 - v) * f
+                    };
+                    *c = (out + 0.5).clamp(0.0, 255.0) as u8;
+                }
             }
         }
-    }
+    });
 }
 
 fn grain(img: &mut RgbaImage, amount: f32) {
     let w = img.width() as usize;
     let scale = amount * 40.0 / 32_767.5;
-    for (y, row) in img.as_mut().chunks_exact_mut(w * 4).enumerate() {
-        let hy = (y as u32).wrapping_mul(0x85EB_CA77);
-        for (x, p) in row.chunks_exact_mut(4).enumerate() {
-            // Deterministic hash noise so previews and exports agree.
-            let mut n = (x as u32).wrapping_mul(0x9E37_79B1) ^ hy;
-            n ^= n >> 15;
-            n = n.wrapping_mul(0x2C1B_3C6D);
-            n ^= n >> 12;
-            let noise = (n & 0xFFFF) as f32 * scale - amount * 40.0;
-            for c in &mut p[..3] {
-                *c = (*c as f32 + noise).round_ties_even().clamp(0.0, 255.0) as u8;
+    for_rows(img.as_mut(), w * 4, |y0, band| {
+        for (i, row) in band.chunks_exact_mut(w * 4).enumerate() {
+            let hy = ((y0 + i) as u32).wrapping_mul(0x85EB_CA77);
+            for (x, p) in row.chunks_exact_mut(4).enumerate() {
+                // Deterministic hash noise so previews and exports agree.
+                let mut n = (x as u32).wrapping_mul(0x9E37_79B1) ^ hy;
+                n ^= n >> 15;
+                n = n.wrapping_mul(0x2C1B_3C6D);
+                n ^= n >> 12;
+                let noise = (n & 0xFFFF) as f32 * scale - amount * 40.0;
+                for c in &mut p[..3] {
+                    *c = (*c as f32 + noise).round_ties_even().clamp(0.0, 255.0) as u8;
+                }
             }
         }
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -672,28 +714,34 @@ pub(super) fn develop(mut img: RgbaImage, d: &Develop) -> Result<RgbaImage> {
         // Tone only: everything is per channel, so map u8 -> u8 directly.
         let lut8: [[u8; 256]; 3] =
             std::array::from_fn(|c| std::array::from_fn(|v| (t.lut[c][v] * 255.0 + 0.5) as u8));
-        for p in img.as_mut().chunks_exact_mut(4) {
-            p[0] = lut8[0][p[0] as usize];
-            p[1] = lut8[1][p[1] as usize];
-            p[2] = lut8[2][p[2] as usize];
-        }
-    } else if tone.is_some() || color.is_some() {
-        for p in img.as_mut().chunks_exact_mut(4) {
-            let (mut r, mut g, mut b) = match &tone {
-                Some(t) => (t.apply(0, p[0]), t.apply(1, p[1]), t.apply(2, p[2])),
-                None => (
-                    p[0] as f32 / 255.0,
-                    p[1] as f32 / 255.0,
-                    p[2] as f32 / 255.0,
-                ),
-            };
-            if let Some(c) = &color {
-                (r, g, b) = c.apply(r, g, b);
+        let w = img.width() as usize;
+        for_rows(img.as_mut(), w * 4, |_, band| {
+            for p in band.chunks_exact_mut(4) {
+                p[0] = lut8[0][p[0] as usize];
+                p[1] = lut8[1][p[1] as usize];
+                p[2] = lut8[2][p[2] as usize];
             }
-            p[0] = (r * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
-            p[1] = (g * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
-            p[2] = (b * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
-        }
+        });
+    } else if tone.is_some() || color.is_some() {
+        let w = img.width() as usize;
+        for_rows(img.as_mut(), w * 4, |_, band| {
+            for p in band.chunks_exact_mut(4) {
+                let (mut r, mut g, mut b) = match &tone {
+                    Some(t) => (t.apply(0, p[0]), t.apply(1, p[1]), t.apply(2, p[2])),
+                    None => (
+                        p[0] as f32 / 255.0,
+                        p[1] as f32 / 255.0,
+                        p[2] as f32 / 255.0,
+                    ),
+                };
+                if let Some(c) = &color {
+                    (r, g, b) = c.apply(r, g, b);
+                }
+                p[0] = (r * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+                p[1] = (g * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+                p[2] = (b * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+            }
+        });
     }
     if d.blur > 0.0 {
         blur(&mut img, d.blur / 100.0);
@@ -717,6 +765,51 @@ pub(super) fn develop(mut img: RgbaImage, d: &Develop) -> Result<RgbaImage> {
 mod tests {
     use super::*;
     use image::Rgba;
+
+    /// Reference box blur: a direct average over the clipped window.
+    fn naive_box_blur(src: &[u8], w: usize, h: usize, r: usize) -> Vec<u8> {
+        let avg = |vals: &mut dyn Iterator<Item = u32>| {
+            let (mut sum, mut n) = (0u32, 0u32);
+            for v in vals {
+                sum += v;
+                n += 1;
+            }
+            ((sum + n / 2) / n) as u8
+        };
+        let mut tmp = vec![0u8; src.len()];
+        for y in 0..h {
+            for x in 0..w {
+                tmp[y * w + x] = avg(&mut (x.saturating_sub(r)..=(x + r).min(w - 1))
+                    .map(|xx| src[y * w + xx] as u32));
+            }
+        }
+        let mut out = vec![0u8; src.len()];
+        for y in 0..h {
+            for x in 0..w {
+                out[y * w + x] = avg(&mut (y.saturating_sub(r)..=(y + r).min(h - 1))
+                    .map(|yy| tmp[yy * w + x] as u32));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn box_blur_matches_a_direct_average_for_any_band_split() {
+        // Sizes and radii chosen so bands of rows end inside, at and beyond the window.
+        for (w, h, r) in [
+            (7, 5, 1),
+            (13, 200, 3),
+            (31, 130, 40),
+            (64, 300, 2),
+            (5, 65, 64),
+            (9, 1000, 7),
+        ] {
+            let src: Vec<u8> = (0..w * h).map(|i| ((i * 37 + i / 7) % 251) as u8).collect();
+            let (mut dst, mut tmp) = (vec![0u8; w * h], vec![0u8; w * h]);
+            box_blur(&src, &mut dst, &mut tmp, w, h, r);
+            assert_eq!(dst, naive_box_blur(&src, w, h, r), "{w}x{h} r={r}");
+        }
+    }
 
     fn solid(c: [u8; 3]) -> RgbaImage {
         RgbaImage::from_pixel(8, 8, Rgba([c[0], c[1], c[2], 200]))

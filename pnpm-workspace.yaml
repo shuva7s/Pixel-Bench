@@ -1,6 +1,5 @@
 packages:
   - apps/*
-  - packages/*
 
 # unrs-resolver ships prebuilt binaries as optional deps; its postinstall is not needed.
 allowBuilds:

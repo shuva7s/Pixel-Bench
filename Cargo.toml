@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/image-core", "crates/avif-encoder", "packages/image-engine-wasm", "packages/image-engine-wasm/avif"]
+members = ["crates/image-core", "crates/avif-encoder", "crates/app-core", "crates/ai", "apps/desktop/src-tauri"]
 
 [workspace.package]
 edition = "2024"
@@ -17,5 +17,6 @@ thiserror = "2"
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# Panics unwind (the default), so a failure in one image job is reported as
+# an error instead of closing the app.
 strip = true

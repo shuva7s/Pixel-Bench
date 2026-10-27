@@ -1,0 +1,96 @@
+# Builds and tests the desktop app on Windows, macOS and Linux. Installers are
+# uploaded as workflow artifacts (Actions → this run → Artifacts); nothing is
+# published or released.
+name: desktop
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Linux packages for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev nasm webkit2gtk-driver xvfb
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Frontend (type-check, lint, unit tests, static build)
+        run: |
+          pnpm --filter desktop typecheck
+          pnpm --filter desktop lint
+          pnpm --filter desktop test
+          pnpm --filter desktop build
+      - name: Rust (format, clippy, tests)
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace --release
+      - name: End-to-end tests (the real app, driven over WebDriver)
+        run: |
+          cargo install tauri-driver --locked
+          cargo build -p pixel-bench --features tauri/custom-protocol
+          pnpm --filter desktop test:e2e
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+          - os: macos-latest
+            name: macos-arm64
+          - os: ubuntu-22.04
+            name: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Linux packages for Tauri
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev nasm
+      - name: NASM (AVIF encoder assembly)
+        if: runner.os != 'Linux'
+        uses: ilammy/setup-nasm@v1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the app and installers
+        working-directory: apps/desktop
+        run: pnpm tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixel-bench-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            target/release/bundle/**/*.msi
+            target/release/bundle/**/*.exe
+            target/release/bundle/**/*.dmg
+            target/release/bundle/**/*.deb
+            target/release/bundle/**/*.rpm
+            target/release/bundle/**/*.AppImage
